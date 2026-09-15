@@ -8,6 +8,7 @@ dependencies = [
     "fastapi>=0.115.0",
     "fastembed>=0.8.0",
     "nltk>=3.10.3",
+    "python-dotenv>=1.0.0",
     "qdrant-client>=1.19.0",
     "uvicorn>=0.30.0",
 ]

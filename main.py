@@ -1,8 +1,10 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException, Security
+from fastapi.security import APIKeyHeader
 from pydantic import BaseModel
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import List
+from dotenv import load_dotenv
 from fastembed import TextEmbedding
 from qdrant_client import QdrantClient
 from qdrant_client.models import (
@@ -14,6 +16,12 @@ from qdrant_client.models import (
     Range,
 )
 import uvicorn
+import os
+
+load_dotenv()
+
+API_KEY = os.getenv("API_KEY")
+api_key_header = APIKeyHeader(name="X-API-Key")
 
 # Qdrant Configuration
 client = QdrantClient(host="localhost", port=6333)
@@ -45,6 +53,11 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="News Similarity API", lifespan=lifespan)
+
+
+def verify_api_key(key: str = Security(api_key_header)):
+    if key != API_KEY:
+        raise HTTPException(status_code=401, detail="Invalid API Key")
 
 
 class NewsItem(BaseModel):
@@ -147,7 +160,7 @@ def search_similar_news(content: str, exclude_id: int | str, threshold: float = 
     return matches
 
 
-@app.post("/process-news", response_model=ProcessResponse)
+@app.post("/process-news", response_model=ProcessResponse, dependencies=[Depends(verify_api_key)])
 async def process_news(request: NewsRequest, threshold: float = 0.80):
     all_matches = []
 
@@ -170,4 +183,5 @@ async def process_news(request: NewsRequest, threshold: float = 0.80):
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=7000)
+    port = int(os.getenv("PORT", 7000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
