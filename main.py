@@ -56,11 +56,14 @@ class NewsRequest(BaseModel):
     news_items: List[NewsItem]
 
 
+class MatchedNews(BaseModel):
+    news_id: int | str
+    similarity_score: float
+
+
 class ProcessResponse(BaseModel):
-    message: str
-    processed_count: int
-    skipped_count: int
-    deleted_count: int
+    is_matched: bool
+    matched_news: List[MatchedNews] | None = None
 
 
 def check_exists(news_id: int | str) -> bool:
@@ -121,26 +124,49 @@ def delete_old_embeddings(days: int = 7) -> int:
     return 0
 
 
+def search_similar_news(content: str, exclude_id: int | str, threshold: float = 0.80) -> list[dict]:
+    """Find similar news articles above threshold, excluding the given news_id."""
+    query_vector = list(embedding_model.embed([content]))[0].tolist()
+
+    results = client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        score_threshold=threshold,
+        limit=10,
+    ).points
+
+    matches = []
+    for hit in results:
+        if hit.id != exclude_id:
+            matches.append(
+                {
+                    "news_id": hit.id,
+                    "similarity_score": round(hit.score, 4),
+                }
+            )
+    return matches
+
+
 @app.post("/process-news", response_model=ProcessResponse)
-async def process_news(request: NewsRequest):
-    processed_count = 0
-    skipped_count = 0
+async def process_news(request: NewsRequest, threshold: float = 0.80):
+    all_matches = []
 
     for item in request.news_items:
-        if check_exists(item.news_id):
-            skipped_count += 1
-        else:
+        matches = search_similar_news(item.content, item.news_id, threshold)
+        all_matches.extend(matches)
+
+        if not check_exists(item.news_id):
             upsert_news(item.news_id, item.content)
-            processed_count += 1
 
-    deleted_count = delete_old_embeddings(days=7)
+    delete_old_embeddings(days=7)
 
-    return ProcessResponse(
-        message="News processing completed",
-        processed_count=processed_count,
-        skipped_count=skipped_count,
-        deleted_count=deleted_count,
-    )
+    if all_matches:
+        return ProcessResponse(
+            is_matched=True,
+            matched_news=[MatchedNews(**m) for m in all_matches],
+        )
+
+    return ProcessResponse(is_matched=False)
 
 
 if __name__ == "__main__":
